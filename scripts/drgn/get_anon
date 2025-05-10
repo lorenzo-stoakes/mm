@@ -1,0 +1,38 @@
+#!/usr/bin/env drgn
+
+import sys
+from drgn.helpers.linux import find_task
+from drgn.helpers.linux.mm import for_each_vma
+from drgn.helpers.linux.mm import vma_find
+from drgn.helpers.linux.list import list_count_nodes, list_for_each_entry
+
+pid = int(sys.argv[1])
+addr = int(sys.argv[2], 16)
+
+def desc_vma(vmap):
+	ptr = vmap.value_()
+	# Have to retrieve pointers to it now.
+	avc_list = vmap.anon_vma_chain.address_of_()
+	vma = vmap[0].read_()
+
+	print(f'vma:                  ptr={hex(ptr)}')
+	print(f'vma:             vm_start={hex(vma.vm_start)}')
+	print(f'vma:               vm_end={hex(vma.vm_end)}')
+
+	anon_vmas = [ avc.anon_vma for avc in list_for_each_entry(head=avc_list, member='same_vma', type='struct anon_vma_chain') ]
+	anon_vmas_str = ', '.join([f'{hex(anon_vma)}' for anon_vma in anon_vmas])
+	anon_vma = vma.anon_vma.read_()
+	if anon_vma:
+		print(f'anon_vma:             avc={hex(anon_vma)}')
+		print(f'anon_vma:            avcs={anon_vmas_str}')
+		print(f'anon_vma:          parent={hex(anon_vma.parent)}')
+		print(f'anon_vma:            root={hex(anon_vma.root)}')
+		print(f'anon_vma:        refcount={int(anon_vma.refcount.counter)}')
+		print(f'anon_vma:    num_children={int(anon_vma.num_children)}')
+		print(f'anon_vma: num_active_vmas={int(anon_vma.num_active_vmas)}')
+	else:
+		print(f'anon_vma: <NULL>')
+
+task = find_task(pid)
+vmap = vma_find(task.mm, addr)
+desc_vma(vmap)
