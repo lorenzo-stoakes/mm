@@ -1,0 +1,65 @@
+#!/usr/bin/env drgn
+
+import drgn
+from drgn.helpers.linux import pid
+from drgn.helpers.linux import mm
+
+anon_vmas = dict()
+
+num_vmas = 0
+num_vmas_no_anon = 0
+num_tasks = 0
+
+for task in pid.for_each_task():
+	if not task.mm:
+		continue
+
+	num_tasks += 1
+
+	for vma in mm.for_each_vma(task.mm):
+		num_vmas += 1
+		anon_vma = vma.anon_vma
+		if not anon_vma:
+			num_vmas_no_anon += 1
+			continue
+		anon_vmas[anon_vma.value_()] = anon_vma
+
+print(f"There are {num_vmas} VMAs across {num_tasks} non-kernel tasks, of which {num_vmas_no_anon} have no vma->anon_vma")
+
+num_folios = 0
+
+other_anon_vmas = dict()
+
+for page in mm.for_each_page():
+	if mm.PageTail(page):
+		continue
+
+	num_folios += 1
+
+	mapping = page.mapping.value_()
+	if mapping & 1 and not mapping & 2:
+		mapping = mapping & ~1
+		if mapping < 4096:
+			continue
+
+		try:
+			anon_vma = drgn.Object(prog, 'struct anon_vma *', address=mapping)
+			if anon_vma.refcount.counter.value_() == 0:
+				print("found zero refcount??")
+
+			if not mapping in anon_vmas:
+				other_anon_vmas[mapping] = anon_vma
+		except drgn.FaultError:
+			continue
+
+num_broken = 0
+for ptr in set(other_anon_vmas) - set(anon_vmas):
+	try:
+		anon_vma = other_anon_vmas[ptr]
+		if anon_vma.num_active_vmas > 0:
+			print('found num_active_vmas != 0 but folio references non-vma->anon_vma anon_vma?')
+			num_broken += 1
+	except drgn.FaultError:
+		continue
+
+print(f'Of the {len(anon_vmas)} anon_vmas across {num_folios} folios, {len(other_anon_vmas)} were found not pointed at by a VMA ({num_broken} were not \'empty\').')
